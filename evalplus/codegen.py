@@ -1,5 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
+import threading
 from typing import Dict, List, Optional
 
 from evalplus.data import get_evalperf_data, get_human_eval_plus, get_mbpp_plus
@@ -35,82 +37,126 @@ def codegen(
     print(f"Sanitized code outputs will be saved to {target_path}")
     print(f"Raw outputs will be saved to {raw_target_path}")
 
+    # Prepare tasks for parallel processing
+    tasks_to_process = []
+    for task_id, task in dataset.items():
+        if id_range is not None:
+            id_num = int(task_id.split("/")[1])
+            low, high = id_range
+            if id_num < low or id_num >= high:
+                continue
+
+        if not target_path.endswith(".jsonl"):
+            p_name = task_id.replace("/", "_")
+            os.makedirs(os.path.join(target_path, p_name), exist_ok=True)
+            task2nexist[task_id] = len(
+                [
+                    f
+                    for f in os.listdir(os.path.join(target_path, p_name))
+                    if f.endswith(".py")
+                ]
+            )
+
+        n_more_samples = n_samples
+        if resume and task2nexist.get(task_id, 0) > 0:
+            n_more_samples -= task2nexist[task_id]
+
+        if n_more_samples > 0:
+            tasks_to_process.append({
+                'task_id': task_id,
+                'task': task,
+                'n_more_samples': n_more_samples,
+                'sidx': n_samples - n_more_samples
+            })
+
+    # File writing lock to prevent concurrent writes
+    file_lock = threading.Lock()
+    
+    def process_task(task_info):
+        task_id = task_info['task_id']
+        task = task_info['task']
+        n_more_samples = task_info['n_more_samples']
+        sidx = task_info['sidx']
+        
+        prompt = task["prompt"].strip() + "\n"
+        outputs = model.codegen(
+            prompt,
+            do_sample=not greedy,
+            num_samples=n_more_samples,
+        )
+        
+        if not outputs:
+            return None
+            
+        results = []
+        for impl in outputs:
+            solution = prompt + impl if model.is_direct_completion() else impl
+            sanitized_solution = sanitize(
+                solution, entrypoint=task["entry_point"]
+            )
+            results.append((solution, sanitized_solution))
+            
+        return {
+            'task_id': task_id,
+            'results': results,
+            'p_name': task_id.replace("/", "_") if not target_path.endswith(".jsonl") else None,
+            'sidx': sidx
+        }
+
     backend_type: str = type(model).__name__
     with progress(backend_type) as p:
-        for task_id, task in p.track(dataset.items()):
-            if id_range is not None:
-                id_num = int(task_id.split("/")[1])
-                low, high = id_range
-                if id_num < low or id_num >= high:
-                    p.console.print(f"Skipping {task_id} as it is not in {id_range}")
+        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+            futures = []
+            for task_info in tasks_to_process:
+                p.console.print(f"Submitting: {task_info['task_id']} @ {model}")
+                futures.append(executor.submit(process_task, task_info))
+
+            for future in p.track(as_completed(futures), total=len(futures)):
+                try:
+                    result = future.result()
+                    if not result:
+                        continue
+
+                    with file_lock:
+                        current_sidx = result['sidx']
+                        for solution, sanitized_solution in result['results']:
+                            if target_path.endswith(".jsonl"):
+                                # Writing the sanitized version
+                                with open(target_path, "a") as f:
+                                    f.write(
+                                        json.dumps(
+                                            {"task_id": result['task_id'], "solution": sanitized_solution}
+                                        )
+                                        + "\n"
+                                    )
+
+                                # Writing the raw version
+                                with open(raw_target_path, "a") as f:
+                                    f.write(
+                                        json.dumps({"task_id": result['task_id'], "solution": solution})
+                                        + "\n"
+                                    )
+                            else:
+                                p_name = result['p_name']
+                                # Writing the sanitized version
+                                with open(
+                                    os.path.join(target_path, p_name, f"{current_sidx}.py"),
+                                    "w",
+                                    encoding="utf-8",
+                                ) as f:
+                                    f.write(sanitized_solution)
+
+                                # Writing the raw version
+                                with open(
+                                    os.path.join(raw_target_path, p_name, f"{current_sidx}.py"),
+                                    "w",
+                                    encoding="utf-8",
+                                ) as f:
+                                    f.write(solution)
+                            current_sidx += 1
+                except Exception as e:
+                    p.console.print(f"Error processing task: {str(e)}")
                     continue
-
-            if not target_path.endswith(".jsonl"):
-                p_name = task_id.replace("/", "_")
-                os.makedirs(os.path.join(target_path, p_name), exist_ok=True)
-                task2nexist[task_id] = len(
-                    [
-                        f
-                        for f in os.listdir(os.path.join(target_path, p_name))
-                        if f.endswith(".py")
-                    ]
-                )
-
-            n_more_samples = n_samples
-            log = f"Codegen: {task_id} @ {model}"
-            if resume and task2nexist.get(task_id, 0) > 0:
-                log += f" (resuming from {task2nexist[task_id]})"
-                n_more_samples -= task2nexist[task_id]
-
-            p.console.print(log)
-
-            sidx = n_samples - n_more_samples
-            while sidx < n_samples:
-                prompt = task["prompt"].strip() + "\n"
-                outputs = model.codegen(
-                    prompt,
-                    do_sample=not greedy,
-                    num_samples=n_samples - sidx,
-                )
-                assert outputs, "No outputs from model!"
-                for impl in outputs:
-                    solution = prompt + impl if model.is_direct_completion() else impl
-                    sanitized_solution = sanitize(
-                        solution, entrypoint=task["entry_point"]
-                    )
-                    if target_path.endswith(".jsonl"):
-                        # Writing the sanitized version
-                        with open(target_path, "a") as f:
-                            f.write(
-                                json.dumps(
-                                    {"task_id": task_id, "solution": sanitized_solution}
-                                )
-                                + "\n"
-                            )
-
-                        # Writing the raw version
-                        with open(raw_target_path, "a") as f:
-                            f.write(
-                                json.dumps({"task_id": task_id, "solution": solution})
-                                + "\n"
-                            )
-                    else:
-                        # Writing the sanitized version
-                        with open(
-                            os.path.join(target_path, p_name, f"{sidx}.py"),
-                            "w",
-                            encoding="utf-8",
-                        ) as f:
-                            f.write(sanitized_solution)
-
-                        # Writing the raw version
-                        with open(
-                            os.path.join(raw_target_path, p_name, f"{sidx}.py"),
-                            "w",
-                            encoding="utf-8",
-                        ) as f:
-                            f.write(solution)
-                    sidx += 1
 
 
 def run_codegen(
