@@ -275,7 +275,57 @@ evalplus.evaluate --model "anthropic.claude-3-5-sonnet-20241022-v2:0" \
                   --backend bedrock                                   \
                   --greedy
 ```
+### Ollama backend
 
+- [Ollama](https://ollama.com/)
+
+```bash
+evalplus.evaluate --model "mistral:7b" \
+                  --dataset [humaneval|mbpp]          \
+                  --backend ollama                    \
+                  --base-url http://localhost:11434/v1 \
+                  --greedy
+```
+
+### Intel® Gaudi® Accelerator
+
+- [Intel® Gaudi®](https://docs.habana.ai/en/latest/index.html)
+
+To run `hf` backend for Intel Gaudi install [optimum-habana](https://github.com/huggingface/optimum-habana) first.
+
+```bash
+pip install git+https://github.com/huggingface/optimum-habana.git
+evalplus.evaluate --model "qwen/CodeQwen1.5-7B-Chat" \
+                  --dataset [humaneval|mbpp]         \
+                  --backend hf_gaudi                 \
+                  --greedy                           \
+                  --torch_compile
+```
+OR in Lazy Mode:
+```bash
+PT_HPU_LAZY_MODE=1 evalplus.evaluate --model "qwen/CodeQwen1.5-7B-Chat" \
+                  --dataset [humaneval|mbpp]                            \
+                  --backend hf_gaudi                                    \
+                  --greedy
+```
+
+To run `vllm` backend for Intel Gaudi install [HabanaAI vllm](https://github.com/HabanaAI/vllm-fork) first.
+
+```bash
+git clone https://github.com/HabanaAI/vllm-fork.git
+cd vllm-fork
+git checkout habana_main
+pip install --upgrade pip
+pip install -r requirements-hpu.txt
+python setup.py develop
+```
+Then run:
+```bash
+PT_HPU_LAZY_MODE=1 evalplus.evaluate --model "qwen/CodeQwen1.5-7B-Chat" \
+                  --dataset [humaneval|mbpp]                            \
+                  --backend vllm                                        \
+                  --greedy
+```
 You can checkout the generation and results at `evalplus_results/[humaneval|mbpp]/`
 
 <details><summary>⏬ Using EvalPlus as a local repo? <i>:: click to expand ::</i></summary>

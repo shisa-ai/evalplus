@@ -15,6 +15,7 @@
 - `google`: Configure `GOOGLE_API_KEY`
 - `bedrock`: Configure `BEDROCK_ROLE_ARN`
 - `gptqmodel`: Set quantized `--model` as Hugging Face model ID such as `ModelCloud/Qwen2.5-Coder-32B-Instruct-gptqmodel-4bit-vortex-v1`
+- `ollama`: Configure `--base-url`
 
 ```shell
 evalplus.codegen --model "mistralai/Mistral-7B-Instruct-v0.3" --greedy --root [result_path] --dataset [mbpp|humaneval] --backend [vllm|hf|openai|...]
@@ -129,7 +130,7 @@ HUMANEVAL_OVERRIDE_PATH="/path/to/HumanEvalPlus.jsonl.gz" evalplus.evaluate --da
 
 > [!Tip]
 >
-> Program execution can be configured. See [Program Execution in EvalPlus and EvalPerf](./docs/execution.md).
+> Program execution can be configured. See [Program Execution in EvalPlus and EvalPerf](./execution.md).
 
 <details><summary>🤔 Evaluate with local GitHub repo? <i>:: click to expand ::</i></summary>
 <div>
