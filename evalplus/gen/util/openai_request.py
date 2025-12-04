@@ -13,11 +13,17 @@ def make_request(
     n: int = 1,
     **kwargs
 ) -> ChatCompletion:
+    # EvalPlus historically used a sampling-heavy configuration here.
+    # For compatibility with OpenAI-compatible gateways (including
+    # Gemini's /v1beta/openai bridge) we stick to the standard
+    # `max_tokens` parameter instead of the newer
+    # `max_completion_tokens`, which some providers do not yet
+    # recognize on the chat.completions endpoint.
     kwargs["top_p"] = 0.95
-    kwargs["max_completion_tokens"] = max_tokens
+    kwargs["max_tokens"] = max_tokens
     if model.startswith("o1-"):  # pop top-p and max_completion_tokens
         kwargs.pop("top_p")
-        kwargs.pop("max_completion_tokens")
+        kwargs.pop("max_tokens")
         temperature = 1.0  # o1 models do not support temperature
 
     return client.chat.completions.create(
