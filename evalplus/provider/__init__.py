@@ -89,6 +89,14 @@ def make_model(
         from evalplus.provider.openai import OpenAIChatDecoder
 
         assert not force_base_prompt, f"{backend} backend does not serve base model"
+        # Forward max_new_tokens (and any other base-class kwargs) so callers
+        # can override the 768-token default via the CLI. Without this,
+        # thinking-mode models exhaust the budget on <think> tokens and return
+        # empty content for every sample.
+        max_new_tokens = kwargs.get("max_new_tokens")
+        decoder_kwargs: dict = {}
+        if max_new_tokens is not None:
+            decoder_kwargs["max_new_tokens"] = int(max_new_tokens)
         return OpenAIChatDecoder(
             name=model,
             batch_size=batch_size,
@@ -97,6 +105,7 @@ def make_model(
             verify_certificate=verify_certificate,
             instruction_prefix=instruction_prefix,
             response_prefix=response_prefix,
+            **decoder_kwargs,
         )
     elif backend == "ollama":
         from evalplus.provider.ollama import OllamaChatDecoder
